@@ -259,6 +259,7 @@ uint16_t get_port_from_string(const char *input) {
 }
 
 void * recv_message_thread(void *arg) {
+    // TODO: try to pass valgrind
     ssize_t bytes_recv;
     struct message msg;
     int dest_id = *(int *)arg;
