@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#define SEND_MSG_TO_TWO 5
+
 void usage() {
     fprintf(stderr, "Usage: P1 <ip> <port>\n");
     exit(EXIT_FAILURE);
@@ -14,19 +16,12 @@ int main(int argc, char const *argv[]) {
         usage();
     }
 
-    if (!init_network(1, argv[0], argv[1])) {
-        // Socket error
+    if (!init_process(1, argv[0], argv[1])) {
+        fprintf(stderr, "The process could not be started\n");
     }
 
-    send_message(2,READY_TO_SHUTDOWN);
-    recv_message(2);
-    while (get_clock_lamport() < 5) {
-        continue;
-    }
-    if (get_message_info(2) != SHUTDOWN_NOW) {
-        printf("Error\n");
-    }
-    send_message(2,SHUTDOWN_ACK);
-    close_network(1);
+    ready_to_shutdown();
+    while (get_clock_lamport() < SEND_MSG_TO_TWO) sleep(1);
+    shutdown_proc();
     return 0;
 }

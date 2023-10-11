@@ -11,14 +11,24 @@ int socket_fd;
 pthread_t recv_thread;
 int lamport_clock = 0;
 int n_threads = 0;
+int n_clients_accepted = 0;
 enum operations curr_operation;
 
 // Info to manage multiple connections from server
+struct accept_info {
+    int thread_id;
+    struct sockaddr *__addr;
+    socklen_t *__len;
+};
+
+struct accept_info accept_info_threads[N_CLIENTS];
+
 struct client_info {
     int id;
     int is_real_id;
     int socket_fd;
     pthread_t recv_thread;
+    pthread_t accept_thread;
     enum operations curr_operation;
 };
 
@@ -40,6 +50,7 @@ void update_clock_lamport(unsigned int clock_lamport);
 uint16_t get_port_from_string(const char *input);
 int init_client(int sockfd, struct sockaddr *__addr, socklen_t __len);
 int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len);
+void * accept_client_thread(void *arg);
 void * recv_message_thread(void *arg);
 void print_info(char message[20], enum socket_operation operation, int action);
 // -------------- End of private functions --------------
@@ -49,7 +60,7 @@ int get_clock_lamport() {
     return lamport_clock;
 }
 
-int init_network(int id, const char *ip, const char *port_in) {
+int init_process(int id, const char *ip, const char *port_in) {
     struct in_addr addr;
     struct sockaddr_in servaddr;
     int tcp_socket;
@@ -131,7 +142,7 @@ int send_message(int id, enum operations action) {
         bytes_sent = send(socket_fd, &msg, sizeof(msg), MSG_WAITALL);
     }
     if (bytes_sent < 0) {
-        fprintf(stderr, "send failed");
+        fprintf(stderr, "send failed\n");
     }
 
     return bytes_sent;
@@ -139,10 +150,11 @@ int send_message(int id, enum operations action) {
 
 int recv_message(int dest_id) {
 // Create a thread for each one
-    //if (n_threads != 0) {
-    //    fprintf(stderr, "Waiting data to be recover: use get_message_info(dest_id).\n");
-    //    return 0;
-    //}
+    int id = dest_id;
+    if (proc_id == SERVER_ID && n_clients_accepted < N_CLIENTS) {
+        pthread_join(server_fd[n_clients_accepted].accept_thread ,NULL);
+        n_clients_accepted++;
+    }
 
     n_threads++;
     if (n_threads > N_CLIENTS) {
@@ -153,7 +165,7 @@ int recv_message(int dest_id) {
     if (proc_id == SERVER_ID) {
         // Get corresponding socket_fd from server_fd, if no ids wait for response to load
         for (size_t i = 0; i < N_CLIENTS; i++) {
-            if (server_fd[i].id == dest_id) {
+            if (server_fd[i].id == id) {
                 server_fd[i].is_real_id = 1;
                 pthread_create(&server_fd[i].recv_thread, NULL, recv_message_thread, (void *) &server_fd[i].id);
                 return 1;
@@ -163,11 +175,11 @@ int recv_message(int dest_id) {
         // we suppose that client_id 1 is server_id[0], if we fail 
         // as we need to listen for both, then later we will
         // have it correct for when it matters
-        if (dest_id == 1) {
-            server_fd[0].id = dest_id;
+        if (id == 1) {
+            server_fd[0].id = id;
             pthread_create(&server_fd[0].recv_thread, NULL, recv_message_thread, (void *) &server_fd[0].id);
         } else {
-            server_fd[1].id = dest_id;
+            server_fd[1].id = id;
             pthread_create(&server_fd[1].recv_thread, NULL, recv_message_thread, (void *) &server_fd[1].id);
         }
     } else {
@@ -178,21 +190,52 @@ int recv_message(int dest_id) {
 }
 
 enum operations get_message_info(int dest_id) {
-    struct message msg;
-    void * out_data;
     if (proc_id == SERVER_ID) {
         for (size_t i = 0; i < N_CLIENTS; i++) {
             if (server_fd[i].id == dest_id) {
-               pthread_join(server_fd[i].recv_thread ,&out_data);
+               pthread_join(server_fd[i].recv_thread ,NULL);
                n_threads--;
                return server_fd[i].curr_operation;
             }
         }
     } else {
-        pthread_join(recv_thread ,&out_data);
+        pthread_join(recv_thread ,NULL);
         n_threads--;
         return curr_operation;
     }
+}
+
+int ready_to_shutdown() {
+    send_message(2,READY_TO_SHUTDOWN);
+    recv_message(2);
+    return 1;
+}
+
+int shutdown_proc() {
+    if (get_message_info(2) != SHUTDOWN_NOW) {
+        printf("Error\n");
+    }
+    send_message(2,SHUTDOWN_ACK);
+    close_network(proc_id);
+    return 1;
+}
+
+int wait_to_shutdown() {
+    recv_message(1);
+    recv_message(3);
+}
+
+int send_to_shutdown(int id) {
+    if (get_message_info(id) == READY_TO_SHUTDOWN) {
+        printf("Correct\n");
+    }
+    send_message(id,SHUTDOWN_NOW);
+    recv_message(id);
+}
+
+int is_all_shutdown() {
+    close_network(proc_id);
+    return get_message_info(3) == SHUTDOWN_ACK && get_message_info(1) == SHUTDOWN_ACK;
 }
 
 // Private functions
@@ -204,12 +247,22 @@ void update_clock_lamport(unsigned int clock_lamport) {
     }
 }
 
+uint16_t get_port_from_string(const char *input) {
+    char *end;
+    long val;
+    
+    val = strtol(input, &end, 10);
+    if (end == input || *end != '\0' || val < 0 || val >= 0x10000) {
+        return 0;
+    }
+    return (uint16_t)val;
+}
+
 int init_client(int sockfd, struct sockaddr *__addr, socklen_t __len) {
     if (connect(sockfd, __addr, __len) < 0){
         fprintf(stderr, "Unable to connect.\n");
         return 0;
     }
-    sleep(3);
     printf("Connected to the server...\n");
     return sockfd;
 }
@@ -235,34 +288,33 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
     }
     printf("Server listening...\n");
 
+    socket_fd = sockfd;
     // Wait for both clients to connect
     for (int i = 0; i < N_CLIENTS; i++) {
-        if ((server_fd[i].socket_fd = accept(sockfd, __addr, &__len)) < 0) {
-            fprintf(stderr, "Accept failed\n");
-            return 0;
-        }
+        accept_info_threads[i].thread_id = i;
+        accept_info_threads[i].__addr = __addr;
+        accept_info_threads[i].__len = &__len;
         server_fd[i].is_real_id = 0;
+        pthread_create(&server_fd[i].accept_thread, NULL, accept_client_thread, (void *) &accept_info_threads[i]);
     }
+
+    wait_to_shutdown();
 
     return sockfd;
 }
 
-uint16_t get_port_from_string(const char *input) {
-    char *end;
-    long val;
-    
-    val = strtol(input, &end, 10);
-    if (end == input || *end != '\0' || val < 0 || val >= 0x10000) {
-        return 0;
+void * accept_client_thread(void *arg) {
+    struct accept_info info = *(struct accept_info *) arg;
+    if ((server_fd[info.thread_id].socket_fd = accept(socket_fd, info.__addr, info.__len)) < 0) {
+        fprintf(stderr, "Accept failed\n");
     }
-    return (uint16_t)val;
+    pthread_exit(NULL);
 }
 
 void * recv_message_thread(void *arg) {
-    // TODO: try to pass valgrind
     ssize_t bytes_recv;
-    struct message msg;
     int dest_id = *(int *)arg;
+    struct message msg;
 
     if (proc_id == SERVER_ID) {
         // Get corresponding socket_fd from server_fd, if no ids wait for response to load
@@ -282,12 +334,10 @@ void * recv_message_thread(void *arg) {
         if (!server_fd[0].is_real_id && dest_id == 1) {
             bytes_recv = recv(server_fd[0].socket_fd, &msg, sizeof(msg), MSG_WAITALL);
             server_fd[0].id = msg.origin[1] - 48;
-            printf("listening id0: %d\n", server_fd[0].id);
             server_fd[0].curr_operation = msg.action;
         } else if (!server_fd[1].is_real_id) {
             bytes_recv = recv(server_fd[1].socket_fd, &msg, sizeof(msg), MSG_WAITALL);
             server_fd[1].id = msg.origin[1] - 48;
-            printf("listening id1: %d\n", server_fd[1].id);
             server_fd[1].curr_operation = msg.action;
         }
     } else {
@@ -301,7 +351,7 @@ void * recv_message_thread(void *arg) {
         update_clock_lamport(msg.clock_lamport);
         print_info(msg.origin, RECEIVE, msg.action);
     }
-
+    //free(msg);
     pthread_exit(NULL);
 }
 

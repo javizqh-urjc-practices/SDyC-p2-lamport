@@ -2,6 +2,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#define SEND_MSG_TO_ONE 3
+#define SEND_MSG_TO_THREE 7
+#define ALL_CLIENTS_CLOSED 11
+
 void usage() {
     fprintf(stderr, "Usage: P1 <ip> <port>\n");
     exit(EXIT_FAILURE);
@@ -14,38 +18,18 @@ int main(int argc, char const *argv[]) {
         usage();
     }
 
-    if (!init_network(2, argv[0], argv[1])) {
-        // Socket error
+    if (!init_process(2, argv[0], argv[1])) {
+        fprintf(stderr, "The process could not be started\n");
     }
 
-    recv_message(1);
-    recv_message(3);
-    while (get_clock_lamport() < 3) {
-        continue;
+    while (get_clock_lamport() < SEND_MSG_TO_ONE) sleep(1);
+    send_to_shutdown(1);
+    while (get_clock_lamport() < SEND_MSG_TO_THREE) sleep(1);
+    send_to_shutdown(3);
+    while (get_clock_lamport() < ALL_CLIENTS_CLOSED) sleep(1);
+
+    if (is_all_shutdown()) {
+        printf("Los clientes fueron correctamente apagados en t(lamport) = %d\n", get_clock_lamport());
     }
-    if (get_message_info(1) == READY_TO_SHUTDOWN) {
-        printf("Correct 1\n");
-    }
-    if (get_message_info(3) == READY_TO_SHUTDOWN) {
-        printf("Correct 3\n");
-    }
-    send_message(1,SHUTDOWN_NOW);
-    recv_message(1);
-    while (get_clock_lamport() < 7) {
-        continue;
-    }
-    if (get_message_info(1) == SHUTDOWN_ACK) {
-        printf("Correct 2\n");
-    }
-    send_message(3, SHUTDOWN_NOW);
-    recv_message(3);
-    while (get_clock_lamport() < 11) {
-        continue;
-    }
-    if (get_message_info(3) != SHUTDOWN_ACK) {
-        printf("Correct 4\n");
-    }
-    printf("Los clientes fueron correctamente apagados en t(lamport) = %d\n", get_clock_lamport());
-    close_network(2);
     return 0;
 }
