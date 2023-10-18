@@ -6,6 +6,7 @@
 #define N_CLIENTS 2
 #define MESSAGE_MAX_SIZE 20
 #define ZERO_ASCII 48
+#define BROADCAST -1
 
 #define ERROR(msg) fprintf(stderr,"STUB ERROR: %s\n",msg)
 
@@ -186,28 +187,30 @@ int recv_message(int dest_id) {
     }
 
     if (proc_id == SERVER_ID) {
+        // At the beggining we do not know the order, so we wait for both, 
+        // we suppose that client_id 1 is server_id[0], if we fail 
+        // as we need to listen for both, then later we will
+        // have it correct for when it matters
+        if (id == BROADCAST) {
+            for (size_t i = 0; i < N_CLIENTS; i++) {
+                if (server_fd[i].id == 0) {
+                    server_fd[i].id = BROADCAST - n_threads;
+                    pthread_create(&server_fd[i].recv_thread, NULL, 
+                                recv_message_thread,(void *) &server_fd[i].id);
+                    return 1;
+                }
+                
+            }
+        }
         // Get corresponding socket_fd from server_fd, if no ids wait for 
         // response to load
         for (size_t i = 0; i < N_CLIENTS; i++) {
-            if (server_fd[i].id == id) {
+            if (server_fd[i].id == id && server_fd[i].is_real_id) {
                 server_fd[i].is_real_id = 1;
                 pthread_create(&server_fd[i].recv_thread, NULL, 
                                recv_message_thread, (void *) &server_fd[i].id);
                 return 1;
             }
-        }
-        // At the beggining we do not know the order, so we wait for both, 
-        // we suppose that client_id 1 is server_id[0], if we fail 
-        // as we need to listen for both, then later we will
-        // have it correct for when it matters
-        if (id == 1) {
-            server_fd[0].id = id;
-            pthread_create(&server_fd[0].recv_thread, NULL, recv_message_thread,
-                           (void *) &server_fd[0].id);
-        } else {
-            server_fd[1].id = id;
-            pthread_create(&server_fd[1].recv_thread, NULL, recv_message_thread,
-                           (void *) &server_fd[1].id);
         }
     } else {
         pthread_create(&recv_thread, NULL, recv_message_thread,
@@ -251,8 +254,8 @@ int shutdown_proc() {
 }
 
 int wait_to_shutdown() {
-    recv_message(1);
-    recv_message(3);
+    recv_message(BROADCAST);
+    recv_message(BROADCAST);
 }
 
 int shutdown_to(int id) {
@@ -362,30 +365,20 @@ void * recv_message_thread(void *arg) {
     if (proc_id == SERVER_ID) {
         // Get corresponding socket_fd from server_fd, if no ids wait for 
         // response to load
-        for (size_t i = 0; i < N_CLIENTS; i++) {
-            if (server_fd[i].is_real_id && server_fd[i].id == dest_id) {
-                bytes_recv = recv(server_fd[i].socket_fd, &msg, sizeof(msg),
-                                  MSG_WAITALL);
-                server_fd[i].curr_operation = msg.action;
-                update_clock_lamport(msg.clock_lamport);
-                print_info(msg.origin, RECEIVE, msg.action);
-                pthread_exit(NULL);
+        if (dest_id < BROADCAST) {
+            bytes_recv = recv(server_fd[-dest_id-2].socket_fd, &msg, sizeof(msg),
+                            MSG_WAITALL);
+            server_fd[-dest_id-2].is_real_id = 1;
+            server_fd[-dest_id-2].id = msg.origin[1] - ZERO_ASCII;
+            server_fd[-dest_id-2].curr_operation = msg.action;
+        } else {
+            for (size_t i = 0; i < N_CLIENTS; i++) {
+                if (server_fd[i].is_real_id && server_fd[i].id == dest_id) {
+                    bytes_recv = recv(server_fd[i].socket_fd, &msg, sizeof(msg),
+                                    MSG_WAITALL);
+                    server_fd[i].curr_operation = msg.action;
+                }
             }
-        }
-        // At the beggining we do not know the order, so we wait for both, 
-        // we suppose that client_id 1 is server_id[0], if we fail 
-        // as we need to listen for both, then later we will
-        // have it correct for when it matters
-        if (!server_fd[0].is_real_id && dest_id == 1) {
-            bytes_recv = recv(server_fd[0].socket_fd, &msg, sizeof(msg),
-                              MSG_WAITALL);
-            server_fd[0].id = msg.origin[1] - ZERO_ASCII;
-            server_fd[0].curr_operation = msg.action;
-        } else if (!server_fd[1].is_real_id) {
-            bytes_recv = recv(server_fd[1].socket_fd, &msg, sizeof(msg), 
-                              MSG_WAITALL);
-            server_fd[1].id = msg.origin[1] - ZERO_ASCII;
-            server_fd[1].curr_operation = msg.action;
         }
     } else {
         bytes_recv = recv(socket_fd, &msg, sizeof(msg), MSG_WAITALL);
