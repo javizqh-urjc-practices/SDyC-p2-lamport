@@ -4,8 +4,19 @@
 
 #define SERVER_ID 2
 #define N_CLIENTS 2
+#define MESSAGE_MAX_SIZE 20
+#define ZERO_ASCII 48
+
+#define ERROR(msg) fprintf(stderr,"STUB ERROR: %s\n",msg)
 
 // ----------- Private functions and structs ------------
+
+enum operations {
+    READY_TO_SHUTDOWN = 0,
+    SHUTDOWN_NOW,
+    SHUTDOWN_ACK
+};
+
 int proc_id;
 int socket_fd;
 pthread_t recv_thread;
@@ -47,6 +58,10 @@ enum socket_operation {
 };
 
 void update_clock_lamport(unsigned int clock_lamport);
+int close_network(int id);
+int send_message(int dest_id, enum operations action);
+int recv_message(int dest_id);
+enum operations get_message_info(int dest_id);
 uint16_t get_port_from_string(const char *input);
 int init_client(int sockfd, struct sockaddr *__addr, socklen_t __len);
 int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len);
@@ -89,7 +104,10 @@ int init_process(int id, const char *ip, const char *port_in) {
         fprintf(stderr, "Socket failed\n");
         return 0;
     }
-    printf("Socket successfully created...\n");
+
+    #ifdef DEBUG
+        printf("Socket successfully created...\n");
+    #endif
 
     if (id == SERVER_ID) {
         socket_fd = init_server(tcp_socket, (struct sockaddr *)&servaddr, len);
@@ -105,17 +123,19 @@ int close_network(int id) {
     if (id == SERVER_ID) {
         for (int i = 0; i < N_CLIENTS; i++) {
             if (close (server_fd[i].socket_fd) < 0) {
-                fprintf(stderr, "Failed to close network\n");
+                ERROR("Failed to close socket");
                 return 0;
             }
         }
     } else {
         if (close (socket_fd) < 0) {
-            fprintf(stderr, "Failed to close network\n");
+            ERROR("Failed to close socket");
             return 0;
         }
     }
-    printf("Network connection closed\n");
+    #ifdef DEBUG
+        printf("Network connection closed\n");
+    #endif
     return 1;
 }
 
@@ -125,7 +145,7 @@ int send_message(int id, enum operations action) {
 
     msg.action = action;
     msg.origin[0] = 'P';
-    msg.origin[1] = 48 + proc_id;
+    msg.origin[1] = ZERO_ASCII + proc_id;
     msg.origin[2] = '\0';
     lamport_clock ++;
     msg.clock_lamport = lamport_clock;
@@ -134,7 +154,8 @@ int send_message(int id, enum operations action) {
     if (proc_id == SERVER_ID) {
         for (size_t i = 0; i < N_CLIENTS; i++) {
             if (server_fd[i].id == id) {
-                bytes_sent = send(server_fd[i].socket_fd, &msg, sizeof(msg), MSG_WAITALL);
+                bytes_sent = send(server_fd[i].socket_fd, &msg, sizeof(msg),
+                                  MSG_WAITALL);
                 break;
             }
         }
@@ -142,7 +163,7 @@ int send_message(int id, enum operations action) {
         bytes_sent = send(socket_fd, &msg, sizeof(msg), MSG_WAITALL);
     }
     if (bytes_sent < 0) {
-        fprintf(stderr, "send failed\n");
+        ERROR("send failed");
     }
 
     return bytes_sent;
@@ -158,16 +179,20 @@ int recv_message(int dest_id) {
 
     n_threads++;
     if (n_threads > N_CLIENTS) {
-        fprintf(stderr, "More threads than clients connected\n");
+        #ifdef DEBUG
+            fprintf(stderr, "More threads than clients connected\n");
+        #endif
         return 0;
     }
 
     if (proc_id == SERVER_ID) {
-        // Get corresponding socket_fd from server_fd, if no ids wait for response to load
+        // Get corresponding socket_fd from server_fd, if no ids wait for 
+        // response to load
         for (size_t i = 0; i < N_CLIENTS; i++) {
             if (server_fd[i].id == id) {
                 server_fd[i].is_real_id = 1;
-                pthread_create(&server_fd[i].recv_thread, NULL, recv_message_thread, (void *) &server_fd[i].id);
+                pthread_create(&server_fd[i].recv_thread, NULL, 
+                               recv_message_thread, (void *) &server_fd[i].id);
                 return 1;
             }
         }
@@ -177,13 +202,16 @@ int recv_message(int dest_id) {
         // have it correct for when it matters
         if (id == 1) {
             server_fd[0].id = id;
-            pthread_create(&server_fd[0].recv_thread, NULL, recv_message_thread, (void *) &server_fd[0].id);
+            pthread_create(&server_fd[0].recv_thread, NULL, recv_message_thread,
+                           (void *) &server_fd[0].id);
         } else {
             server_fd[1].id = id;
-            pthread_create(&server_fd[1].recv_thread, NULL, recv_message_thread, (void *) &server_fd[1].id);
+            pthread_create(&server_fd[1].recv_thread, NULL, recv_message_thread,
+                           (void *) &server_fd[1].id);
         }
     } else {
-        pthread_create(&recv_thread, NULL, recv_message_thread, (void *) &dest_id);
+        pthread_create(&recv_thread, NULL, recv_message_thread,
+                       (void *) &dest_id);
     }
 
     return 1;
@@ -213,7 +241,9 @@ int ready_to_shutdown() {
 
 int shutdown_proc() {
     if (get_message_info(2) != SHUTDOWN_NOW) {
-        printf("Error\n");
+        #ifdef DEBUG
+            printf("Error: incorrect message\n");
+        #endif
     }
     send_message(2,SHUTDOWN_ACK);
     close_network(proc_id);
@@ -225,9 +255,11 @@ int wait_to_shutdown() {
     recv_message(3);
 }
 
-int send_to_shutdown(int id) {
-    if (get_message_info(id) == READY_TO_SHUTDOWN) {
-        printf("Correct\n");
+int shutdown_to(int id) {
+    if (get_message_info(id) != READY_TO_SHUTDOWN) {
+        #ifdef DEBUG
+            printf("Error: incorrect message\\n");
+        #endif
     }
     send_message(id,SHUTDOWN_NOW);
     recv_message(id);
@@ -235,7 +267,8 @@ int send_to_shutdown(int id) {
 
 int is_all_shutdown() {
     close_network(proc_id);
-    return get_message_info(3) == SHUTDOWN_ACK && get_message_info(1) == SHUTDOWN_ACK;
+    return get_message_info(3) == SHUTDOWN_ACK && 
+           get_message_info(1) == SHUTDOWN_ACK;
 }
 
 // Private functions
@@ -260,10 +293,13 @@ uint16_t get_port_from_string(const char *input) {
 
 int init_client(int sockfd, struct sockaddr *__addr, socklen_t __len) {
     if (connect(sockfd, __addr, __len) < 0){
-        fprintf(stderr, "Unable to connect.\n");
+        ERROR("Unable to connect");
         return 0;
     }
-    printf("Connected to the server...\n");
+
+    #ifdef DEBUG
+        printf("Connected to the server...\n");
+    #endif
     return sockfd;
 }
 
@@ -271,22 +307,27 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
     const int enable = 1;
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR,
         &enable, sizeof(int)) < 0) {
-        fprintf(stderr, "Setsockopt(SO_REUSEADDR) failed\n");
+        ERROR("Setsockopt(SO_REUSEADDR) failed");
         return 0;
     }
 
     if (bind(sockfd, __addr, __len) < 0) {
-        fprintf(stderr, "Bind failed\n");
+        ERROR("Unable to bind");
         return 0;
     }
 
-    printf("Socket successfully binded...\n");
+    #ifdef DEBUG
+        printf("Socket successfully binded...\n");
+    #endif
 
     if (listen(sockfd, 5) < 0) {
-        fprintf(stderr, "Listen failed\n");
+        ERROR("Unable to listen");
         return 0;
     }
-    printf("Server listening...\n");
+
+    #ifdef DEBUG
+        printf("Server listening...\n");
+    #endif
 
     socket_fd = sockfd;
     // Wait for both clients to connect
@@ -295,7 +336,8 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
         accept_info_threads[i].__addr = __addr;
         accept_info_threads[i].__len = &__len;
         server_fd[i].is_real_id = 0;
-        pthread_create(&server_fd[i].accept_thread, NULL, accept_client_thread, (void *) &accept_info_threads[i]);
+        pthread_create(&server_fd[i].accept_thread, NULL, accept_client_thread,
+                       (void *) &accept_info_threads[i]);
     }
 
     wait_to_shutdown();
@@ -305,8 +347,9 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
 
 void * accept_client_thread(void *arg) {
     struct accept_info info = *(struct accept_info *) arg;
-    if ((server_fd[info.thread_id].socket_fd = accept(socket_fd, info.__addr, info.__len)) < 0) {
-        fprintf(stderr, "Accept failed\n");
+    if ((server_fd[info.thread_id].socket_fd = 
+         accept(socket_fd, info.__addr, info.__len)) < 0) {
+        ERROR("failed to accept socket");
     }
     pthread_exit(NULL);
 }
@@ -317,10 +360,12 @@ void * recv_message_thread(void *arg) {
     struct message msg;
 
     if (proc_id == SERVER_ID) {
-        // Get corresponding socket_fd from server_fd, if no ids wait for response to load
+        // Get corresponding socket_fd from server_fd, if no ids wait for 
+        // response to load
         for (size_t i = 0; i < N_CLIENTS; i++) {
             if (server_fd[i].is_real_id && server_fd[i].id == dest_id) {
-                bytes_recv = recv(server_fd[i].socket_fd, &msg, sizeof(msg), MSG_WAITALL);
+                bytes_recv = recv(server_fd[i].socket_fd, &msg, sizeof(msg),
+                                  MSG_WAITALL);
                 server_fd[i].curr_operation = msg.action;
                 update_clock_lamport(msg.clock_lamport);
                 print_info(msg.origin, RECEIVE, msg.action);
@@ -332,12 +377,14 @@ void * recv_message_thread(void *arg) {
         // as we need to listen for both, then later we will
         // have it correct for when it matters
         if (!server_fd[0].is_real_id && dest_id == 1) {
-            bytes_recv = recv(server_fd[0].socket_fd, &msg, sizeof(msg), MSG_WAITALL);
-            server_fd[0].id = msg.origin[1] - 48;
+            bytes_recv = recv(server_fd[0].socket_fd, &msg, sizeof(msg),
+                              MSG_WAITALL);
+            server_fd[0].id = msg.origin[1] - ZERO_ASCII;
             server_fd[0].curr_operation = msg.action;
         } else if (!server_fd[1].is_real_id) {
-            bytes_recv = recv(server_fd[1].socket_fd, &msg, sizeof(msg), MSG_WAITALL);
-            server_fd[1].id = msg.origin[1] - 48;
+            bytes_recv = recv(server_fd[1].socket_fd, &msg, sizeof(msg), 
+                              MSG_WAITALL);
+            server_fd[1].id = msg.origin[1] - ZERO_ASCII;
             server_fd[1].curr_operation = msg.action;
         }
     } else {
@@ -346,7 +393,7 @@ void * recv_message_thread(void *arg) {
     }
 
     if (bytes_recv < 0) {
-        fprintf(stderr, "receive failed");
+        ERROR("Failed to receive");
     } else {
         update_clock_lamport(msg.clock_lamport);
         print_info(msg.origin, RECEIVE, msg.action);

@@ -2,7 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define SEND_MSG_TO_TWO 5
+#define SHUTDOWN 5
 
 void usage() {
     fprintf(stderr, "Usage: P1 <ip> <port>\n");
@@ -21,7 +21,7 @@ int main(int argc, char const *argv[]) {
     }
 
     ready_to_shutdown();
-    while (get_clock_lamport() < SEND_MSG_TO_TWO) sleep(1);
+    while (get_clock_lamport() < SHUTDOWN) sleep(1);
     shutdown_proc();
     return 0;
 }

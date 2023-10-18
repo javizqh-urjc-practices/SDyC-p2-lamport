@@ -2,12 +2,12 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define SEND_MSG_TO_ONE 3
-#define SEND_MSG_TO_THREE 7
-#define ALL_CLIENTS_CLOSED 11
+#define SHUTDOWN_ONE 3
+#define SHUTDOWN_THREE 7
+#define ALL_SHUTDOWN 11
 
 void usage() {
-    fprintf(stderr, "Usage: P1 <ip> <port>\n");
+    fprintf(stderr, "Usage: P2 <ip> <port>\n");
     exit(EXIT_FAILURE);
 }
 
@@ -22,11 +22,11 @@ int main(int argc, char const *argv[]) {
         fprintf(stderr, "The process could not be started\n");
     }
 
-    while (get_clock_lamport() < SEND_MSG_TO_ONE) sleep(1);
-    send_to_shutdown(1);
-    while (get_clock_lamport() < SEND_MSG_TO_THREE) sleep(1);
-    send_to_shutdown(3);
-    while (get_clock_lamport() < ALL_CLIENTS_CLOSED) sleep(1);
+    while (get_clock_lamport() < SHUTDOWN_ONE) sleep(1);
+    shutdown_to(1);
+    while (get_clock_lamport() < SHUTDOWN_THREE) sleep(1);
+    shutdown_to(3);
+    while (get_clock_lamport() < ALL_SHUTDOWN) sleep(1);
 
     if (is_all_shutdown()) {
         printf("Los clientes fueron correctamente apagados en t(lamport) = %d\n", get_clock_lamport());
