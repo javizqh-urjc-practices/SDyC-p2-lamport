@@ -1,3 +1,7 @@
+# Author: Javier Izquierdo Hernandez (javizqh@gmail.com)
+# Also: j.izquierdoh.2021@alumnos.urjc.es
+# Date: 2023-10-18
+
 CC=gcc
 CFLAGS=-I.
 DEPS =

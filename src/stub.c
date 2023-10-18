@@ -1,6 +1,14 @@
+/**
+ * @file stub.c
+ * @author Javier Izquierdo Hernandez (javizqh@gmail.com)
+ * @brief stub de j.izquierdoh.2021@alumnos.urjc.es
+ * @version 1.0
+ * @date 2023-10-18
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
 #include "stub.h"
-#include <err.h>
-#include <unistd.h>
 
 #define SERVER_ID 2
 #define N_CLIENTS 2
@@ -10,21 +18,17 @@
 
 #define ERROR(msg) fprintf(stderr,"STUB ERROR: %s\n",msg)
 
-// ----------- Private functions and structs ------------
-
+// ------------------- Private structs and enums declarations -----------------
 enum operations {
     READY_TO_SHUTDOWN = 0,
     SHUTDOWN_NOW,
     SHUTDOWN_ACK
 };
 
-int proc_id;
-int socket_fd;
-pthread_t recv_thread;
-int lamport_clock = 0;
-int n_threads = 0;
-int n_clients_accepted = 0;
-enum operations curr_operation;
+enum socket_operation {
+    SEND,
+    RECEIVE
+};
 
 // Info to manage multiple connections from server
 struct accept_info {
@@ -33,31 +37,35 @@ struct accept_info {
     socklen_t __len;
 };
 
-struct accept_info accept_info_threads[N_CLIENTS];
-
 struct client_info {
     int id;
-    int is_real_id;
     int socket_fd;
     pthread_t recv_thread;
     pthread_t accept_thread;
     enum operations curr_operation;
 };
 
-struct client_info server_fd[N_CLIENTS];
-// ------------------------------------------------------
-
 struct message {
     char origin[20];
     enum operations action;
     unsigned int clock_lamport;
 };
-
-enum socket_operation {
-    SEND,
-    RECEIVE
-};
-
+// --------------- End of private structs and enums declarations --------------
+// --------------------- Private variables declarations -----------------------
+// For both client and server
+int proc_id;
+int socket_fd;
+int lamport_clock = 0;
+int n_threads = 0;
+enum operations curr_operation;
+// Only for clients
+pthread_t recv_thread;
+// Only for server
+int n_clients_accepted = 0;
+struct accept_info accept_info_threads[N_CLIENTS];
+struct client_info server_fd[N_CLIENTS];
+// ------------------ End of private variables declarations -------------------
+// --------------------- Private functions declarations -----------------------
 void update_clock_lamport(unsigned int clock_lamport);
 int close_network(int id);
 int send_message(int dest_id, enum operations action);
@@ -66,10 +74,11 @@ enum operations get_message_info(int dest_id);
 uint16_t get_port_from_string(const char *input);
 int init_client(int sockfd, struct sockaddr *__addr, socklen_t __len);
 int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len);
+int wait_to_shutdown();
 void * accept_client_thread(void *arg);
 void * recv_message_thread(void *arg);
 void print_info(char message[20], enum socket_operation operation, int action);
-// -------------- End of private functions --------------
+// ------------------ End of private functions declarations -------------------
 
 
 int get_clock_lamport() {
@@ -119,123 +128,6 @@ int init_process(int id, const char *ip, const char *port_in) {
     return socket_fd > 0;
 }
 
-int close_network(int id) {
-    // TODO: check for threads
-    if (id == SERVER_ID) {
-        for (int i = 0; i < N_CLIENTS; i++) {
-            if (close (server_fd[i].socket_fd) < 0) {
-                ERROR("Failed to close socket");
-                return 0;
-            }
-        }
-    } else {
-        if (close (socket_fd) < 0) {
-            ERROR("Failed to close socket");
-            return 0;
-        }
-    }
-    #ifdef DEBUG
-        printf("Network connection closed\n");
-    #endif
-    return 1;
-}
-
-int send_message(int id, enum operations action) {
-    ssize_t bytes_sent;
-    struct message msg;
-
-    msg.action = action;
-    msg.origin[0] = 'P';
-    msg.origin[1] = ZERO_ASCII + proc_id;
-    msg.origin[2] = '\0';
-    lamport_clock ++;
-    msg.clock_lamport = lamport_clock;
-    print_info(msg.origin, SEND, msg.action);
-
-    if (proc_id == SERVER_ID) {
-        for (size_t i = 0; i < N_CLIENTS; i++) {
-            if (server_fd[i].id == id) {
-                bytes_sent = send(server_fd[i].socket_fd, &msg, sizeof(msg),
-                                  MSG_WAITALL);
-                break;
-            }
-        }
-    } else {
-        bytes_sent = send(socket_fd, &msg, sizeof(msg), MSG_WAITALL);
-    }
-    if (bytes_sent < 0) {
-        ERROR("send failed");
-    }
-
-    return bytes_sent;
-}
-
-int recv_message(int dest_id) {
-// Create a thread for each one
-    int id = dest_id;
-    // if (proc_id == SERVER_ID && n_clients_accepted < N_CLIENTS) {
-    //     pthread_join(server_fd[n_clients_accepted].accept_thread ,NULL);
-    //     n_clients_accepted++;
-    // }
-
-    n_threads++;
-    if (n_threads > N_CLIENTS) {
-        #ifdef DEBUG
-            fprintf(stderr, "More threads than clients connected\n");
-        #endif
-        return 0;
-    }
-
-    if (proc_id == SERVER_ID) {
-        // At the beggining we do not know the order, so we wait for both, 
-        // we suppose that client_id 1 is server_id[0], if we fail 
-        // as we need to listen for both, then later we will
-        // have it correct for when it matters
-        if (id == BROADCAST) {
-            for (size_t i = 0; i < N_CLIENTS; i++) {
-                if (server_fd[i].id == 0) {
-                    server_fd[i].id = BROADCAST - n_threads;
-                    pthread_create(&server_fd[i].recv_thread, NULL, 
-                                recv_message_thread,(void *) &server_fd[i].id);
-                    return 1;
-                }
-                
-            }
-        }
-        // Get corresponding socket_fd from server_fd, if no ids wait for 
-        // response to load
-        for (size_t i = 0; i < N_CLIENTS; i++) {
-            if (server_fd[i].id == id && server_fd[i].is_real_id) {
-                server_fd[i].is_real_id = 1;
-                pthread_create(&server_fd[i].recv_thread, NULL, 
-                               recv_message_thread, (void *) &server_fd[i].id);
-                return 1;
-            }
-        }
-    } else {
-        pthread_create(&recv_thread, NULL, recv_message_thread,
-                       (void *) &dest_id);
-    }
-
-    return 1;
-}
-
-enum operations get_message_info(int dest_id) {
-    if (proc_id == SERVER_ID) {
-        for (size_t i = 0; i < N_CLIENTS; i++) {
-            if (server_fd[i].id == dest_id) {
-               pthread_join(server_fd[i].recv_thread ,NULL);
-               n_threads--;
-               return server_fd[i].curr_operation;
-            }
-        }
-    } else {
-        pthread_join(recv_thread ,NULL);
-        n_threads--;
-        return curr_operation;
-    }
-}
-
 int ready_to_shutdown() {
     send_message(2,READY_TO_SHUTDOWN);
     recv_message(2);
@@ -253,11 +145,6 @@ int shutdown_proc() {
     return 1;
 }
 
-int wait_to_shutdown() {
-    recv_message(BROADCAST);
-    recv_message(BROADCAST);
-}
-
 int shutdown_to(int id) {
     if (get_message_info(id) != READY_TO_SHUTDOWN) {
         #ifdef DEBUG
@@ -266,6 +153,7 @@ int shutdown_to(int id) {
     }
     send_message(id,SHUTDOWN_NOW);
     recv_message(id);
+    return 1;
 }
 
 int is_all_shutdown() {
@@ -274,25 +162,8 @@ int is_all_shutdown() {
            get_message_info(1) == SHUTDOWN_ACK;
 }
 
-// Private functions
-void update_clock_lamport(unsigned int clock_lamport) {
-    if (clock_lamport > lamport_clock) {
-        lamport_clock = clock_lamport + 1;
-    } else {
-        lamport_clock++;
-    }
-}
-
-uint16_t get_port_from_string(const char *input) {
-    char *end;
-    long val;
-    
-    val = strtol(input, &end, 10);
-    if (end == input || *end != '\0' || val < 0 || val >= 0x10000) {
-        return 0;
-    }
-    return (uint16_t)val;
-}
+// ------------------------ Private functions ---------------------------------
+// -------------------- Initialize socket function ----------------------------
 
 int init_client(int sockfd, struct sockaddr *__addr, socklen_t __len) {
     if (connect(sockfd, __addr, __len) < 0){
@@ -338,7 +209,6 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
         accept_info_threads[i].thread_id = i;
         accept_info_threads[i].__addr = __addr;
         accept_info_threads[i].__len = __len;
-        server_fd[i].is_real_id = 0;
         pthread_create(&server_fd[i].accept_thread, NULL, accept_client_thread,
                        (void *) &accept_info_threads[i]);
     }
@@ -347,6 +217,15 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
 
     return sockfd;
 }
+
+int wait_to_shutdown() {
+    recv_message(BROADCAST);
+    recv_message(BROADCAST);
+}
+
+// ----------------------------------------------------------------------------
+
+// ------------------------- Accept function ----------------------------------
 
 void * accept_client_thread(void *arg) {
     struct accept_info info = *(struct accept_info *) arg;
@@ -357,6 +236,48 @@ void * accept_client_thread(void *arg) {
     pthread_exit(NULL);
 }
 
+// ----------------------------------------------------------------------------
+
+// ------------------------- Recieve functions --------------------------------
+
+int recv_message(int dest_id) {
+    // Create a thread for each one
+    int id = dest_id;
+
+    n_threads++;
+    if (n_threads > N_CLIENTS) {
+        #ifdef DEBUG
+            fprintf(stderr, "More threads than clients connected\n");
+        #endif
+        return 0;
+    }
+
+    if (proc_id == SERVER_ID) {
+        // Get corresponding socket_fd from server_fd, if id is broadcast
+        // assign a broadcast id and wait for a response to load the id
+        for (size_t i = 0; i < N_CLIENTS; i++) {
+            if (id == BROADCAST) {
+                if (server_fd[i].id == 0) {
+                    // The client does not have a real id
+                    server_fd[i].id = BROADCAST - i;
+                    pthread_create(&server_fd[i].recv_thread, NULL, 
+                                recv_message_thread,(void *) &server_fd[i].id);
+                    break;
+                }
+            } else if (server_fd[i].id == id) {
+                pthread_create(&server_fd[i].recv_thread, NULL, 
+                            recv_message_thread,(void *) &server_fd[i].id);
+                break;
+            }
+        }
+    } else {
+        pthread_create(&recv_thread, NULL, recv_message_thread,
+                       (void *) &dest_id);
+    }
+
+    return 1;
+}
+
 void * recv_message_thread(void *arg) {
     ssize_t bytes_recv;
     int dest_id = *(int *)arg;
@@ -365,21 +286,18 @@ void * recv_message_thread(void *arg) {
     if (proc_id == SERVER_ID) {
         // Get corresponding socket_fd from server_fd, if no ids wait for 
         // response to load
-        // if (n_clients_accepted < N_CLIENTS) {
-        //     n_clients_accepted++;
-        // }
-        if (dest_id < BROADCAST) {
-            pthread_join(server_fd[-dest_id-2].accept_thread ,NULL);
-            bytes_recv = recv(server_fd[-dest_id-2].socket_fd, &msg, sizeof(msg),
-                            MSG_WAITALL);
-            server_fd[-dest_id-2].is_real_id = 1;
-            server_fd[-dest_id-2].id = msg.origin[1] - ZERO_ASCII;
-            server_fd[-dest_id-2].curr_operation = msg.action;
+        if (dest_id <= BROADCAST) {
+            pthread_join(server_fd[BROADCAST - dest_id].accept_thread , 
+                         NULL);
+            bytes_recv = recv(server_fd[BROADCAST - dest_id].socket_fd,
+                              &msg, sizeof(msg), MSG_WAITALL);
+            server_fd[BROADCAST - dest_id].id = msg.origin[1] - ZERO_ASCII;
+            server_fd[BROADCAST - dest_id].curr_operation = msg.action;
         } else {
             for (size_t i = 0; i < N_CLIENTS; i++) {
-                if (server_fd[i].is_real_id && server_fd[i].id == dest_id) {
+                if (server_fd[i].id == dest_id) {
                     bytes_recv = recv(server_fd[i].socket_fd, &msg, sizeof(msg),
-                                    MSG_WAITALL);
+                                      MSG_WAITALL);
                     server_fd[i].curr_operation = msg.action;
                 }
             }
@@ -397,6 +315,104 @@ void * recv_message_thread(void *arg) {
     }
     //free(msg);
     pthread_exit(NULL);
+}
+
+enum operations get_message_info(int dest_id) {
+    if (proc_id == SERVER_ID) {
+        for (size_t i = 0; i < N_CLIENTS; i++) {
+            if (server_fd[i].id == dest_id) {
+               pthread_join(server_fd[i].recv_thread ,NULL);
+               n_threads--;
+               return server_fd[i].curr_operation;
+            }
+        }
+    } else {
+        pthread_join(recv_thread ,NULL);
+        n_threads--;
+        return curr_operation;
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+// --------------------------- Send function ----------------------------------
+
+int send_message(int id, enum operations action) {
+    ssize_t bytes_sent;
+    struct message msg;
+
+    msg.action = action;
+    msg.origin[0] = 'P';
+    msg.origin[1] = ZERO_ASCII + proc_id;
+    msg.origin[2] = '\0';
+    lamport_clock ++;
+    msg.clock_lamport = lamport_clock;
+    print_info(msg.origin, SEND, msg.action);
+
+    if (proc_id == SERVER_ID) {
+        for (size_t i = 0; i < N_CLIENTS; i++) {
+            if (server_fd[i].id == id) {
+                bytes_sent = send(server_fd[i].socket_fd, &msg, sizeof(msg),
+                                  MSG_WAITALL);
+                break;
+            }
+        }
+    } else {
+        bytes_sent = send(socket_fd, &msg, sizeof(msg), MSG_WAITALL);
+    }
+    if (bytes_sent < 0) {
+        ERROR("send failed");
+    }
+
+    return bytes_sent;
+}
+
+// ----------------------------------------------------------------------------
+
+// ------------------------ Close socket function -----------------------------
+
+int close_network(int id) {
+    // TODO: check for threads, no need to do ir really
+    if (id == SERVER_ID) {
+        for (int i = 0; i < N_CLIENTS; i++) {
+            if (close (server_fd[i].socket_fd) < 0) {
+                ERROR("Failed to close socket");
+                return 0;
+            }
+        }
+    } else {
+        if (close (socket_fd) < 0) {
+            ERROR("Failed to close socket");
+            return 0;
+        }
+    }
+    #ifdef DEBUG
+        printf("Network connection closed\n");
+    #endif
+    return 1;
+}
+
+// ----------------------------------------------------------------------------
+
+// ------------------------- Utility functions --------------------------------
+
+void update_clock_lamport(unsigned int clock_lamport) {
+    if (clock_lamport > lamport_clock) {
+        lamport_clock = clock_lamport + 1;
+    } else {
+        lamport_clock++;
+    }
+}
+
+uint16_t get_port_from_string(const char *input) {
+    char *end;
+    long val;
+    
+    val = strtol(input, &end, 10);
+    if (end == input || *end != '\0' || val < 0 || val >= 0x10000) {
+        return 0;
+    }
+    return (uint16_t)val;
 }
 
 void print_info(char message[20], enum socket_operation operation, int action) {
@@ -424,4 +440,5 @@ void print_info(char message[20], enum socket_operation operation, int action) {
     }
 }
 
-// End of private functions
+// ----------------------------------------------------------------------------
+// --------------------- End of private functions -----------------------------

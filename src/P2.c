@@ -1,3 +1,13 @@
+/**
+ * @file P2.c
+ * @author Javier Izquierdo Hernandez (javizqh@gmail.com)
+ * @brief P2 de j.izquierdoh.2021@alumnos.urjc.es
+ * @version 1.0
+ * @date 2023-10-18
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
 #include "stub.h"
 #include <unistd.h>
 #include <stdlib.h>
@@ -25,14 +35,21 @@ int main(int argc, char const *argv[]) {
         fprintf(stderr, "The process could not be started\n");
     }
 
-    while (get_clock_lamport() < SHUTDOWN_ONE) nanosleep(&sleep_time, &sleep_time);
+    while (get_clock_lamport() < SHUTDOWN_ONE) {
+        nanosleep(&sleep_time, &sleep_time);
+    }
     shutdown_to(1);
-    while (get_clock_lamport() < SHUTDOWN_THREE) nanosleep(&sleep_time, &sleep_time);
+    while (get_clock_lamport() < SHUTDOWN_THREE) {
+        nanosleep(&sleep_time, &sleep_time);
+    }
     shutdown_to(3);
-    while (get_clock_lamport() < ALL_SHUTDOWN) nanosleep(&sleep_time, &sleep_time);
+    while (get_clock_lamport() < ALL_SHUTDOWN) {
+        nanosleep(&sleep_time, &sleep_time);
+    }
 
     if (is_all_shutdown()) {
-        printf("Los clientes fueron correctamente apagados en t(lamport) = %d\n", get_clock_lamport());
+        printf("Los clientes fueron correctamente apagados en t(lamport) = %d\n"
+               , get_clock_lamport());
     }
     return 0;
 }

@@ -1,3 +1,14 @@
+/**
+ * @file P3.c
+ * @author Javier Izquierdo Hernandez (javizqh@gmail.com)
+ * @brief P3 de j.izquierdoh.2021@alumnos.urjc.es
+ * @version 1.0
+ * @date 2023-10-18
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
+
 #include "stub.h"
 #include <unistd.h>
 #include <stdlib.h>
