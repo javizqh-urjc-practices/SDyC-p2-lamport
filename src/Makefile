@@ -2,6 +2,8 @@
 # Also: j.izquierdoh.2021@alumnos.urjc.es
 # Date: 2023-10-18
 
+# If compile with debug change to this $(CC) -c -DDEBUG -o $@ $< $(CFLAGS)
+
 CC=gcc
 CFLAGS=-I.
 DEPS =

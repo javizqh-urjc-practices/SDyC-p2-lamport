@@ -46,7 +46,7 @@ struct client_info {
 };
 
 struct message {
-    char origin[20];
+    char origin[MESSAGE_MAX_SIZE];
     enum operations action;
     unsigned int clock_lamport;
 };
@@ -313,7 +313,7 @@ void * recv_message_thread(void *arg) {
         update_clock_lamport(msg.clock_lamport);
         print_info(msg.origin, RECEIVE, msg.action);
     }
-    //free(msg);
+
     pthread_exit(NULL);
 }
 
@@ -372,7 +372,6 @@ int send_message(int id, enum operations action) {
 // ------------------------ Close socket function -----------------------------
 
 int close_network(int id) {
-    // TODO: check for threads, no need to do ir really
     if (id == SERVER_ID) {
         for (int i = 0; i < N_CLIENTS; i++) {
             if (close (server_fd[i].socket_fd) < 0) {
@@ -415,7 +414,8 @@ uint16_t get_port_from_string(const char *input) {
     return (uint16_t)val;
 }
 
-void print_info(char message[20], enum socket_operation operation, int action) {
+void print_info(char message[MESSAGE_MAX_SIZE], 
+                enum socket_operation operation, int action) {
     switch (operation) {
     case SEND:
         printf("%s, %d, SEND, ", message, lamport_clock);
