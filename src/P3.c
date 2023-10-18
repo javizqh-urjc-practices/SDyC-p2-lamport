@@ -1,6 +1,7 @@
 #include "stub.h"
 #include <unistd.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define SHUTDOWN 9
 
@@ -10,6 +11,10 @@ void usage() {
 }
 
 int main(int argc, char const *argv[]) {
+    struct timespec sleep_time;
+    sleep_time.tv_sec = 0;
+    sleep_time.tv_nsec = 1000;
+
     argc--; argv++;
 
     if (argc != 2) {
@@ -21,7 +26,7 @@ int main(int argc, char const *argv[]) {
     }
 
     ready_to_shutdown();
-    while (get_clock_lamport() < SHUTDOWN) sleep(1);
+    while (get_clock_lamport() < SHUTDOWN) nanosleep(&sleep_time, &sleep_time);
     shutdown_proc();
     return 0;
 }

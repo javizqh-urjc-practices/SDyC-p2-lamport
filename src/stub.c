@@ -30,7 +30,7 @@ enum operations curr_operation;
 struct accept_info {
     int thread_id;
     struct sockaddr *__addr;
-    socklen_t *__len;
+    socklen_t __len;
 };
 
 struct accept_info accept_info_threads[N_CLIENTS];
@@ -173,10 +173,10 @@ int send_message(int id, enum operations action) {
 int recv_message(int dest_id) {
 // Create a thread for each one
     int id = dest_id;
-    if (proc_id == SERVER_ID && n_clients_accepted < N_CLIENTS) {
-        pthread_join(server_fd[n_clients_accepted].accept_thread ,NULL);
-        n_clients_accepted++;
-    }
+    // if (proc_id == SERVER_ID && n_clients_accepted < N_CLIENTS) {
+    //     pthread_join(server_fd[n_clients_accepted].accept_thread ,NULL);
+    //     n_clients_accepted++;
+    // }
 
     n_threads++;
     if (n_threads > N_CLIENTS) {
@@ -337,7 +337,7 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
     for (int i = 0; i < N_CLIENTS; i++) {
         accept_info_threads[i].thread_id = i;
         accept_info_threads[i].__addr = __addr;
-        accept_info_threads[i].__len = &__len;
+        accept_info_threads[i].__len = __len;
         server_fd[i].is_real_id = 0;
         pthread_create(&server_fd[i].accept_thread, NULL, accept_client_thread,
                        (void *) &accept_info_threads[i]);
@@ -351,7 +351,7 @@ int init_server(int sockfd, struct sockaddr *__addr, socklen_t __len) {
 void * accept_client_thread(void *arg) {
     struct accept_info info = *(struct accept_info *) arg;
     if ((server_fd[info.thread_id].socket_fd = 
-         accept(socket_fd, info.__addr, info.__len)) < 0) {
+         accept(socket_fd, info.__addr, &info.__len)) < 0) {
         ERROR("failed to accept socket");
     }
     pthread_exit(NULL);
@@ -365,7 +365,11 @@ void * recv_message_thread(void *arg) {
     if (proc_id == SERVER_ID) {
         // Get corresponding socket_fd from server_fd, if no ids wait for 
         // response to load
+        // if (n_clients_accepted < N_CLIENTS) {
+        //     n_clients_accepted++;
+        // }
         if (dest_id < BROADCAST) {
+            pthread_join(server_fd[-dest_id-2].accept_thread ,NULL);
             bytes_recv = recv(server_fd[-dest_id-2].socket_fd, &msg, sizeof(msg),
                             MSG_WAITALL);
             server_fd[-dest_id-2].is_real_id = 1;
